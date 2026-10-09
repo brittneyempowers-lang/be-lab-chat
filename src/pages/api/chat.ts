@@ -3,7 +3,7 @@ import { generateText } from "ai";
 import { anthropic } from "@wix/ai";
 import {
   GLOBAL_DAILY_CAP, MAX_INPUT_CHARS, MAX_OUTPUT_TOKENS, MAX_TURNS, MODEL,
-  preflight, readUsage, recordUse, refundUse, reply, verifyMember,
+  plain, preflight, readUsage, recordUse, refundUse, reply, summarize, verifyMember,
 } from "../../lib/lab";
 
 const SYSTEM = [
@@ -13,7 +13,9 @@ const SYSTEM = [
   "If their prompt asks you to ask questions first, ask them, briefly.",
   "Members have a small number of chats, so give a complete, useful answer in one reply instead of a teaser.",
   "Do not invent facts about the member's business. Say so when you are unsure.",
-  "Format with short paragraphs and simple lists. Do not use tables or code blocks unless asked.",
+  "Write in plain text only: short paragraphs and simple numbered or dashed lists.",
+  "Never use Markdown. No asterisks for bold, no pound-sign headings, no backticks, no tables.",
+  "You cannot browse the internet or open links. If asked for current news, prices or live information, say you cannot look it up and help with what you know.",
 ].join(" ");
 
 type Turn = { role: "user" | "assistant"; content: string };
@@ -36,6 +38,8 @@ export const OPTIONS: APIRoute = ({ request }) => preflight(request);
 
 export const POST: APIRoute = async ({ request }) => {
   let useId: string | null = null;
+  let who: any = null;
+  let sent = 0;
   try {
     const body = await request.json().catch(() => ({}));
     const turns = cleanTurns(body.messages);
@@ -52,6 +56,8 @@ export const POST: APIRoute = async ({ request }) => {
 
     /* count the chat before spending on the AI call; refund it if the call fails */
     const chars = turns.reduce((n, t) => n + t.content.length, 0);
+    who = member;
+    sent = chars;
     useId = await recordUse(member, chars);
 
     const result = await generateText({
@@ -60,19 +66,14 @@ export const POST: APIRoute = async ({ request }) => {
       messages: turns,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
     });
-    const text = (result.text || "").trim();
+    const text = plain(result.text || "");
     if (!text) throw new Error("empty_reply");
 
-    const after = await readUsage(member).catch(() => null);
-    return reply(request, 200, {
-      text,
-      tier: member.tier,
-      limit: member.limit,
-      remaining: after ? after.remaining : Math.max(0, before.remaining - 1),
-      resetAt: after ? after.resetAt : null,
-    });
+    /* count from what we already know instead of re-reading, so a slow database read can't show a stale number */
+    const after = summarize(member.limit, [...before.times, Date.now()], before.globalUsed + 1);
+    return reply(request, 200, { text, tier: member.tier, limit: member.limit, remaining: after.remaining, resetAt: after.resetAt });
   } catch (err) {
-    if (useId) await refundUse(useId);
+    if (useId && who) await refundUse(useId, who, sent, String((err as any)?.message || err));
     console.error("chat failed", err);
     return reply(request, 503, { error: "unavailable" });
   }

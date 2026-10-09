@@ -70,39 +70,57 @@ export async function verifyMember(token: unknown): Promise<Member | null> {
   return best;
 }
 
-export type Usage = { used: number; remaining: number; resetAt: string | null; globalUsed: number };
+export type Usage = { used: number; remaining: number; resetAt: string | null; globalUsed: number; times: number[] };
+
+/* Work out what is left from the times of the chats still inside the window. */
+export function summarize(limit: number, times: number[], globalUsed: number): Usage {
+  const sorted = [...times].sort((x, y) => x - y);
+  const used = sorted.length;
+  const remaining = Math.max(0, limit - used);
+  /* the slot that frees up first is the oldest chat still inside the window */
+  const resetAt = remaining === 0 && used > 0 ? new Date(sorted[used - limit] + WINDOW_MS).toISOString() : null;
+  return { used, remaining, resetAt, globalUsed, times: sorted };
+}
 
 export async function readUsage(member: Member): Promise<Usage> {
   const since = new Date(Date.now() - WINDOW_MS);
   const query = auth.elevate(items.query);
-  const mine = await query(COLLECTION).eq("memberId", member.memberId).gt("_createdDate", since).ascending("_createdDate").limit(100).find();
+  const mine = await query(COLLECTION).eq("memberId", member.memberId).gt("_createdDate", since).ascending("_createdDate").limit(200).find();
   const count = auth.elevate(items.count);
   const globalUsed = await count(COLLECTION, { filter: { _createdDate: { $gt: { $date: since.toISOString() } } } } as any).then(
     (r: any) => (typeof r === "number" ? r : r?.totalCount ?? 0),
     () => 0,
   );
-  const used = mine.items.length;
-  const remaining = Math.max(0, member.limit - used);
-  let resetAt: string | null = null;
-  if (remaining === 0 && used > 0) {
-    /* the slot that frees up first is the oldest chat still inside the window */
-    const freeing = mine.items[used - member.limit] || mine.items[0];
-    const created = new Date((freeing as any)._createdDate);
-    resetAt = new Date(created.getTime() + WINDOW_MS).toISOString();
-  }
-  return { used, remaining, resetAt, globalUsed };
+  /* a chat that failed is kept as a "refunded" row for the record, but not counted */
+  const times = mine.items.filter((row: any) => row.status !== "refunded").map((row: any) => new Date(row._createdDate).getTime());
+  return summarize(member.limit, times, globalUsed);
 }
 
 export async function recordUse(member: Member, chars: number): Promise<string> {
   const insert = auth.elevate(items.insert);
-  const row: any = await insert(COLLECTION, { memberId: member.memberId, tier: member.tier, chars });
+  const row: any = await insert(COLLECTION, { memberId: member.memberId, tier: member.tier, chars, status: "counted" });
   return row._id;
 }
 
-export async function refundUse(id: string): Promise<void> {
+export async function refundUse(id: string, member: Member, chars: number, reason: string): Promise<void> {
   try {
-    await auth.elevate(items.remove)(COLLECTION, id);
+    await auth.elevate(items.update)(COLLECTION, { _id: id, memberId: member.memberId, tier: member.tier, chars, status: "refunded", reason: reason.slice(0, 300) });
   } catch {
     /* a failed refund only costs the member one chat; never fail the request over it */
   }
+}
+
+/* The lab shows answers as plain text, so take out Markdown symbols. */
+export function plain(text: string): string {
+  return text
+    .replace(/```[a-zA-Z]*\n?/g, "")
+    .replace(/\*\*([\s\S]+?)\*\*/g, "$1")
+    .replace(/__([\s\S]+?)__/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^(\s*)\*\s+/gm, "$1- ")
+    .replace(/\*(\S[^*\n]*?)\*/g, "$1")
+    .replace(/`/g, "")
+    .replace(/^\s*[-*_]{3,}\s*$/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
