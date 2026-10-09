@@ -1,0 +1,36 @@
+name: Publish chat service to Wix
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: wix-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+      - name: Install
+        run: npm ci --ignore-scripts
+      - name: Sign in to Wix
+        run: npx wix login --api-key "$WIX_API_KEY"
+        env:
+          WIX_API_KEY: ${{ secrets.WIX_API_KEY }}
+      - name: Pull settings
+        run: npx wix env pull
+      - name: Build
+        run: npx wix build
+        env:
+          CI: "1"
+      - name: Release
+        run: npx wix release
+        env:
+          CI: "1"
