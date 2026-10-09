@@ -16,8 +16,10 @@ export const MAX_SEARCHES = 2;
 export const GLOBAL_DAILY_CAP = 400;
 /* plan id on brittneyempowers.com -> chats allowed per rolling 24 hours */
 export const PLAN_LIMITS: Record<string, { tier: string; limit: number }> = {
-  "2f248d82-291c-4120-9d9a-6039a42a8005": { tier: "one-time", limit: 3 },
-  "50b7adfb-ddc5-4450-9511-9f968a5da94a": { tier: "monthly", limit: 25 },
+  /* AI Lab, one-time: the chat is included */
+  "2f248d82-291c-4120-9d9a-6039a42a8005": { tier: "lab", limit: 25 },
+  /* AI Chat, monthly: chat only */
+  "50b7adfb-ddc5-4450-9511-9f968a5da94a": { tier: "chat", limit: 25 },
 };
 
 export function cors(request: Request): Record<string, string> {
