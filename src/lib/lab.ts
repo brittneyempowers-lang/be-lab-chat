@@ -10,6 +10,8 @@ export const MODEL = "claude-haiku-5-5";
 export const MAX_INPUT_CHARS = 6000;
 export const MAX_TURNS = 8;
 export const MAX_OUTPUT_TOKENS = 1500;
+/* web searches the AI may run inside one chat; each one adds cost */
+export const MAX_SEARCHES = 2;
 /* Safety valve for the whole lab: no more than this many chats in any 24 hours. */
 export const GLOBAL_DAILY_CAP = 400;
 /* plan id on brittneyempowers.com -> chats allowed per rolling 24 hours */

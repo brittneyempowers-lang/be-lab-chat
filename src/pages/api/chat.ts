@@ -1,8 +1,9 @@
 import type { APIRoute } from "astro";
 import { generateText } from "ai";
 import { anthropic } from "@wix/ai";
+import { anthropic as claude } from "@ai-sdk/anthropic";
 import {
-  GLOBAL_DAILY_CAP, MAX_INPUT_CHARS, MAX_OUTPUT_TOKENS, MAX_TURNS, MODEL,
+  GLOBAL_DAILY_CAP, MAX_INPUT_CHARS, MAX_SEARCHES, MAX_OUTPUT_TOKENS, MAX_TURNS, MODEL,
   plain, preflight, readUsage, recordUse, refundUse, reply, summarize, verifyMember,
 } from "../../lib/lab";
 
@@ -15,7 +16,8 @@ const SYSTEM = [
   "Do not invent facts about the member's business. Say so when you are unsure.",
   "Write in plain text only: short paragraphs and simple numbered or dashed lists.",
   "Never use Markdown. No asterisks for bold, no pound-sign headings, no backticks, no tables.",
-  "You cannot browse the internet or open links. If asked for current news, prices or live information, say you cannot look it up and help with what you know.",
+  "You can search the web. Search only when the answer needs current or specific outside information, such as news, prices, dates, or facts about a named company or place. Do not search for writing, planning or brainstorming tasks.",
+  "When you used search results, say where a key fact came from in plain words.",
 ].join(" ");
 
 type Turn = { role: "user" | "assistant"; content: string };
@@ -65,13 +67,21 @@ export const POST: APIRoute = async ({ request }) => {
       system: SYSTEM,
       messages: turns,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
+      tools: { web_search: claude.tools.webSearch_20250305({ maxUses: MAX_SEARCHES }) },
     });
     const text = plain(result.text || "");
     if (!text) throw new Error("empty_reply");
+    const seen = new Set<string>();
+    const sources: { title: string; url: string }[] = [];
+    for (const s of (result.sources || []) as any[]) {
+      if (typeof s?.url !== "string" || !/^https:\/\//.test(s.url) || seen.has(s.url) || sources.length >= 5) continue;
+      seen.add(s.url);
+      sources.push({ title: String(s.title || s.url).slice(0, 120), url: s.url.slice(0, 500) });
+    }
 
     /* count from what we already know instead of re-reading, so a slow database read can't show a stale number */
     const after = summarize(member.limit, [...before.times, Date.now()], before.globalUsed + 1);
-    return reply(request, 200, { text, tier: member.tier, limit: member.limit, remaining: after.remaining, resetAt: after.resetAt });
+    return reply(request, 200, { text, sources, tier: member.tier, limit: member.limit, remaining: after.remaining, resetAt: after.resetAt });
   } catch (err) {
     if (useId && who) await refundUse(useId, who, sent, String((err as any)?.message || err));
     console.error("chat failed", err);

@@ -14,6 +14,7 @@
     "skills": "wix skills"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "3.0.68",
     "@wix/ai": "^1.13.0",
     "@wix/astro": "^2.39.0",
     "@wix/astro-pages": "^2.0.4",
